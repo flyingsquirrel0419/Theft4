@@ -49,6 +49,47 @@ jobs:
       - name: Prepare pinned dependencies and patches
         run: python3 tools/setup_repo.py --jobs 8
 
+      # The iOS bridge compiles the Vulkan source closure, whose include path
+      # and link inputs come from the iPhoneOS MoltenVK archives. Build them
+      # from the repository's pinned, patched MoltenVK submodule.
+      - name: MoltenVK cache key
+        id: mvk
+        run: echo "key=mvk-ios-$(git ls-tree HEAD thirdparty/MoltenVK/MoltenVK | awk '{print $3}')-${{ hashFiles('cmake/dependency-patches/moltenvk.patch') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore MoltenVK
+        id: mvk-cache
+        uses: actions/cache@v4
+        with:
+          path: out/moltenvk-ios
+          key: ${{ steps.mvk.outputs.key }}
+
+      - name: Build MoltenVK for iPhoneOS
+        if: steps.mvk-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          cd thirdparty/MoltenVK/MoltenVK
+          ./fetchDependencies --ios
+          make ios
+          out="$GITHUB_WORKSPACE/out/moltenvk-ios"; mkdir -p "$out"
+          echo "--- iOS device archives produced:"
+          find . -name '*.a' -path '*ios-arm64/*' -not -path '*simulator*' | sort
+          pick() { find . -name "$1" -path '*ios-arm64/*' -not -path '*simulator*' | head -n 1; }
+          cp "$(pick libMoltenVK.a)" "$out/libMoltenVK.a"
+          cp "$(pick libSPIRVCross.a)" "$out/libspirv-cross.a"
+          cp "$(pick libSPIRVTools.a)" "$out/libSPIRV-Tools.a"
+          # MoltenVK's packaged static library already merges its shader
+          # converter and common objects; provide empty placeholders for the
+          # separate archive names the iOS CMake links.
+          for sym in SPIRVToMSLConverter mvkGetMVKConfig; do
+            nm -gU "$out/libMoltenVK.a" 2>/dev/null | grep -q "$sym" && echo "libMoltenVK.a contains $sym"
+          done
+          printf 'void theft4_mvk_placeholder(void){}\n' > "$RUNNER_TEMP/empty.c"
+          xcrun -sdk iphoneos clang -arch arm64 -mios-version-min=26.0 -c "$RUNNER_TEMP/empty.c" -o "$RUNNER_TEMP/empty.o"
+          for lib in libMoltenVK_ShaderConverter.a libMoltenVK_Common.a; do
+            libtool -static -o "$out/$lib" "$RUNNER_TEMP/empty.o"
+          done
+          ls -la "$out"
+
       - name: Build offline Metal shader libraries
         run: |
           set -euo pipefail
@@ -65,6 +106,7 @@ jobs:
           THEFT4_METAL_LIBRARIES: ${{ github.workspace }}/out/direct-metal/ios
           THEFT4_METAL_HOST_LIBRARIES: ${{ github.workspace }}/out/direct-metal/ios/Host
           THEFT4_BUILD_JOBS: '3'
+          THEFT4_MOLTENVK_IOS_LIB_DIR: ${{ github.workspace }}/out/moltenvk-ios
         run: zsh tools/ci_build_ios_ipa.sh
 
       - uses: actions/upload-artifact@v4
