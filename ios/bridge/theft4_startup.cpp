@@ -126,6 +126,12 @@ int theft4_start_game(const char* game_directory, const char* support_directory,
         if(theft4_retail_mode())REXCVAR_SET(gta4_validate_native_hot_caches,false);
         const auto support = std::filesystem::path(support_directory) / "startup";
         std::filesystem::create_directories(support);
+        // Fatal runtime traps (for example InvalidFunctionTrap) write a small
+        // report here in every mode: retail launches have no runtime.log and
+        // discard stdout. Only a fatal trap writes it, so normal play pays
+        // nothing, and the previous report survives relaunch for export.
+        if (!std::getenv("REX_FATAL_REPORT_PATH"))
+            setenv("REX_FATAL_REPORT_PATH", (support / "fatal-report.log").c_str(), 1);
         if(!theft4_retail_mode()) {
             const std::string log_path = (support / "runtime.log").string();
             rex::LogConfig logging;

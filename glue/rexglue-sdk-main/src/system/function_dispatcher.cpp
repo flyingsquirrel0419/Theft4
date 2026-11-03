@@ -22,6 +22,15 @@
 #include <rex/runtime.h>
 #include <rex/system/function_dispatcher.h>
 #include <rex/system/thread_state.h>
+#include <rex/thread.h>
+
+#include <fmt/format.h>
+
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <string>
+#include <utility>
 
 namespace rex::runtime {
 
@@ -32,9 +41,158 @@ FunctionDispatcher* GetBoundFunctionDispatcher() {
   return runtime ? runtime->function_dispatcher() : nullptr;
 }
 
+// Reads one big-endian guest word only when the whole word is in a readable
+// guest page. The trap runs on already-corrupt state, so it must not fault.
+bool TryReadGuestU32(memory::Memory* memory, uint32_t address, uint32_t* out) {
+  if (!memory || address > UINT32_MAX - 3) {
+    return false;
+  }
+  auto* heap = memory->LookupHeap(address);
+  if (!heap || heap != memory->LookupHeap(address + 3)) {
+    return false;
+  }
+  const auto access = heap->QueryRangeAccess(address, address + 3);
+  if ((static_cast<uint32_t>(access) & static_cast<uint32_t>(memory::PageAccess::kReadOnly)) ==
+      0) {
+    return false;
+  }
+  *out = memory::load_and_swap<uint32_t>(memory->TranslateVirtual(address));
+  return true;
+}
+
+const char* ClassifyInvalidTarget(FunctionDispatcher* dispatcher, uint32_t target) {
+  if (target == 0) {
+    return "null";
+  }
+  if (target & 3) {
+    return "misaligned";
+  }
+  if (!dispatcher || dispatcher->FindCallerModuleBase(target) == 0) {
+    return "outside-registered-code";
+  }
+  return "inside-code-unregistered";
+}
+
+// Fatal-trap output. Retail iOS launches install no file log sink and send
+// stdout to /dev/null, so every line is also written to the host-provided
+// REX_FATAL_REPORT_PATH. Each line is flushed to the kernel immediately; abort()
+// does not discard data that has already been write()-n.
+class TrapReport {
+ public:
+  TrapReport() {
+    if (const char* path = std::getenv("REX_FATAL_REPORT_PATH"); path && *path) {
+      file_ = std::fopen(path, "w");
+    }
+  }
+  ~TrapReport() {
+    if (file_) {
+      std::fclose(file_);
+    }
+  }
+  TrapReport(const TrapReport&) = delete;
+  TrapReport& operator=(const TrapReport&) = delete;
+
+  template <typename... Args>
+  void Line(fmt::format_string<Args...> format, Args&&... args) {
+    const std::string line = fmt::format(format, std::forward<Args>(args)...);
+    REXLOG_CRITICAL("{}", line);
+    if (file_) {
+      std::fputs(line.c_str(), file_);
+      std::fputc('\n', file_);
+      std::fflush(file_);
+    }
+  }
+
+ private:
+  std::FILE* file_ = nullptr;
+};
+
+// Diagnostic-only dump for the fatal trap. It never resumes guest execution.
+void LogInvalidFunctionTrapContext(const PPCContext& ctx, TrapReport& report) {
+  FunctionDispatcher* dispatcher = GetBoundFunctionDispatcher();
+  memory::Memory* memory = dispatcher ? dispatcher->memory() : nullptr;
+  const uint32_t target = ctx.last_indirect_target;
+  const uint32_t lr = static_cast<uint32_t>(ctx.lr);
+
+  // With ctr_as_local=false the generated bctr/bctrl path stores CTR before
+  // dispatch. LR still names the guest return address of the call that
+  // reached a tail-dispatched bctr (for example sub_828E02E8 -> 0x828C8F7C).
+  ThreadState* thread_state = ThreadState::Get();
+  auto* host_thread = rex::thread::Thread::GetCurrentThread();
+  report.Line(
+      "[invalid-function] target={:08X} class={} lr={:08X} ctr={:08X} sp={:08X} r2={:08X} "
+      "r13={:08X} guest_tid={:08X} host_tid={:08X} thread='{}' dispatcher={} "
+      "lr_module={:08X} ctr_lookup={}",
+      target, ClassifyInvalidTarget(dispatcher, target), lr, ctx.ctr.u32, ctx.r1.u32, ctx.r2.u32,
+      ctx.r13.u32, thread_state ? thread_state->thread_id() : 0,
+      rex::thread::current_thread_system_id(), host_thread ? host_thread->name() : std::string(),
+      dispatcher != nullptr, dispatcher ? dispatcher->FindCallerModuleBase(lr) : 0,
+      dispatcher && dispatcher->GetFunction(ctx.ctr.u32) ? "registered" : "missing");
+
+  report.Line(
+      "[invalid-function] r0={:08X} r3={:08X} r4={:08X} r5={:08X} r6={:08X} r7={:08X} "
+      "r8={:08X} r9={:08X} r10={:08X} r11={:08X} r12={:08X}",
+      ctx.r0.u32, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.r6.u32, ctx.r7.u32, ctx.r8.u32,
+      ctx.r9.u32, ctx.r10.u32, ctx.r11.u32, ctx.r12.u32);
+  report.Line(
+      "[invalid-function] r24={:08X} r25={:08X} r26={:08X} r27={:08X} r28={:08X} "
+      "r29={:08X} r30={:08X} r31={:08X}",
+      ctx.r24.u32, ctx.r25.u32, ctx.r26.u32, ctx.r27.u32, ctx.r28.u32, ctx.r29.u32, ctx.r30.u32,
+      ctx.r31.u32);
+
+  // Nearest registered entry below an in-code target distinguishes a missing
+  // address-taken entry point (small positive offset) from a corrupt pointer.
+  if (dispatcher && target && dispatcher->FindCallerModuleBase(target) != 0) {
+    constexpr uint32_t kNearestSearchBytes = 0x4000;
+    uint32_t nearest = 0;
+    for (uint32_t delta = 4; delta <= kNearestSearchBytes && target >= delta; delta += 4) {
+      if (dispatcher->GetFunction(target - delta)) {
+        nearest = target - delta;
+        break;
+      }
+    }
+    if (nearest) {
+      report.Line("[invalid-function] nearest-registered-below={:08X} offset=+0x{:X}",
+                      nearest, target - nearest);
+    } else {
+      report.Line("[invalid-function] no registered entry within 0x{:X} below target",
+                      kNearestSearchBytes);
+    }
+  }
+
+  // Xbox 360 back chain: [sp] = caller sp, caller frame's saved LR = [caller_sp - 8].
+  uint32_t sp = ctx.r1.u32;
+  for (int frame = 0; frame < 24; ++frame) {
+    uint32_t caller_sp = 0;
+    uint32_t saved_lr = 0;
+    if (!TryReadGuestU32(memory, sp, &caller_sp) || caller_sp <= sp ||
+        caller_sp - sp > 0x100000 || !TryReadGuestU32(memory, caller_sp - 8, &saved_lr)) {
+      break;
+    }
+    report.Line("[invalid-function] guest-frame[{}] sp={:08X} saved_lr={:08X}", frame,
+                    caller_sp, saved_lr);
+    sp = caller_sp;
+  }
+}
+
 }  // namespace
 
 static void InvalidFunctionTrap(PPCContext& ctx, uint8_t* /*base*/) {
+  // Keep the established first line and flush it before reading more guest
+  // state, so it survives even if the extended dump itself is cut short.
+  static thread_local bool in_trap_dump = false;
+  {
+    TrapReport report;
+    report.Line("Call to invalid or unregistered function at guest address 0x{:08X}",
+                ctx.last_indirect_target);
+    if (auto logger = ::rex::GetLogger()) {
+      logger->flush();
+    }
+    if (!in_trap_dump) {
+      in_trap_dump = true;
+      LogInvalidFunctionTrapContext(ctx, report);
+    }
+  }
   REX_FATAL("Call to invalid or unregistered function at guest address 0x{:08X}",
             ctx.last_indirect_target);
 }

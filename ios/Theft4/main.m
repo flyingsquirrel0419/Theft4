@@ -2372,6 +2372,9 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
         success = success && Theft4AppendDiagnosticFile(stream,
             [startupURL URLByAppendingPathComponent:@"runtime.log"],
             @"Theft4/startup/runtime.log", &budget, included, skipped);
+        success = success && Theft4AppendDiagnosticFile(stream,
+            [startupURL URLByAppendingPathComponent:@"fatal-report.log"],
+            @"Theft4/startup/fatal-report.log", &budget, included, skipped);
 
         NSDirectoryEnumerator *nativeEnumerator =
             [fm enumeratorAtURL:nativeDiagnosticsURL

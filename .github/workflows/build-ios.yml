@@ -1,0 +1,89 @@
+name: iOS IPA Build
+
+# Unsigned sideload IPA (direct Metal renderer), same configuration as
+# tools/build_ios_release.sh. See tools/ci_build_ios_ipa.sh for CI differences.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [diag/invalid-function-trap]
+    paths-ignore: ['docs/**', '**/*.md']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ipa:
+    runs-on: macos-26
+    timeout-minutes: 350
+    env:
+      CLICOLOR_FORCE: 1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Metal toolchain
+        run: |
+          xcrun --sdk iphoneos metal --version || xcodebuild -downloadComponent MetalToolchain
+          xcrun --sdk iphoneos metal --version
+
+      - name: Install build tools
+        run: brew install ninja || true
+
+      - name: Prepare pinned dependencies and patches
+        run: python3 tools/setup_repo.py --jobs 8
+
+      - name: Build offline Metal shader libraries
+        run: |
+          set -euo pipefail
+          cmake -S tools/direct-metal -B out/direct-metal/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build out/direct-metal/build --parallel 3 --target metal_shader_export metal_host_shader_export
+          out/direct-metal/build/metal_shader_export out/direct-metal/corpus
+          out/direct-metal/build/metal_host_shader_export out/direct-metal/host-corpus
+          python3 tools/direct-metal/compile_shaders.py out/direct-metal/corpus out/direct-metal/ios --platform ios
+          python3 tools/direct-metal/compile_shaders.py out/direct-metal/host-corpus out/direct-metal/ios/Host --platform ios
+          ls out/direct-metal/ios | wc -l
+
+      - name: Build and package IPA
+        env:
+          THEFT4_METAL_LIBRARIES: ${{ github.workspace }}/out/direct-metal/ios
+          THEFT4_METAL_HOST_LIBRARIES: ${{ github.workspace }}/out/direct-metal/ios/Host
+          THEFT4_BUILD_JOBS: '3'
+        run: zsh tools/ci_build_ios_ipa.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Theft4-ios-ipa
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build-logs
+          path: |
+            out/build/ios-device-release/CMakeCache.txt
+            out/build/ios-device-release/CMakeFiles/CMakeConfigureLog.yaml
+            out/direct-metal/ios/*.tsv
+            out/direct-metal/ios/*.json
+          if-no-files-found: ignore
+          retention-days: 7
