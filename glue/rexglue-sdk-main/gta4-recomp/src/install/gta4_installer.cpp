@@ -51,6 +51,34 @@ constexpr std::string_view kRequiredPatchSha256 =
 constexpr std::string_view kEmbeddedTargetXexSha256 =
     "8268fdc91f83c4288e1db8319a109e622865497d1405d9f4ca98f46830d1ff21";
 constexpr size_t kMaximumMetadataFileSize = 64_MiB;
+// Files that Title Update 8 delivers next to default.xexp in its STFS package
+// and that the patched executable opens through update:\ (mounted from
+// game/update). A raw default.xexp import does not carry them. Without
+// update:\shaders\fxl_final\water_e2.fxc the water effect's pass data is
+// never initialized, and the first mission's water draw reaches
+// InvalidFunctionTrap. Sizes are the retail TU8 (0.0.8.5) payload sizes.
+struct Tu8PayloadFile {
+  std::string_view path;
+  uint64_t size;
+};
+constexpr std::array<Tu8PayloadFile, 15> kTu8PayloadFiles = {{
+    {"update.img", 831488},
+    {"data/frontend_360.dat", 14289},
+    {"data/frontend_menus.xml", 38954},
+    {"data/effects/entityFx.dat", 15650},
+    {"shaders/dcl/rage_postfx_e1.dcl", 81},
+    {"shaders/dcl/rage_postfx_e2.dcl", 81},
+    {"shaders/dcl/water_e2.dcl", 49},
+    {"shaders/fxl_final/rage_postfx_e1.fxc", 47960},
+    {"shaders/fxl_final/rage_postfx_e2.fxc", 52429},
+    {"shaders/fxl_final/water_e2.fxc", 10582},
+    {"text/american.gxt", 3407},
+    {"text/french.gxt", 3891},
+    {"text/german.gxt", 4049},
+    {"text/italian.gxt", 3939},
+    {"text/spanish.gxt", 3850},
+}};
+
 constexpr size_t kCopyBufferSize = 1_MiB;
 constexpr size_t kMaximumTreeEntries = 500000;
 
@@ -850,6 +878,24 @@ bool ValidateStagedEpisode(const std::filesystem::path& path, Episode episode) {
   return !std::filesystem::exists(path / wrong_marker, error) && !error;
 }
 
+bool ValidateTu8Payload(const std::filesystem::path& game_root, std::string& reason) {
+  const auto update_root = game_root / "update";
+  for (const auto& file : kTu8PayloadFiles) {
+    std::error_code error;
+    const auto path = update_root / std::filesystem::path(file.path);
+    const bool present = std::filesystem::is_regular_file(path, error);
+    const uint64_t size = present ? std::filesystem::file_size(path, error) : 0;
+    if (!present || error || size != file.size) {
+      reason = "Title Update 8 files are missing from the game's update folder (update/" +
+               std::string(file.path) + (present ? " has the wrong size" : " not found") +
+               "). A raw default.xexp does not include them. Select the Title Update 8 "
+               "package file (TU_1A581VI_...) so Theft4 can install update/.";
+      return false;
+    }
+  }
+  return true;
+}
+
 bool ValidateInstalledPair(const std::filesystem::path& game_root, std::string& reason) {
   const auto base_path = game_root / "default.xex";
   std::vector<uint8_t> base_bytes;
@@ -863,7 +909,7 @@ bool ValidateInstalledPair(const std::filesystem::path& game_root, std::string& 
   }
 
   if (base.version == kRequiredTargetVersion && HashBytes(base_bytes) == kEmbeddedTargetXexSha256) {
-    return true;
+    return ValidateTu8Payload(game_root, reason);
   }
 
   if (XXH3_64bits(base_bytes.data(), base_bytes.size()) != kRequiredBaseXexXxh3) {
@@ -878,7 +924,8 @@ bool ValidateInstalledPair(const std::filesystem::path& game_root, std::string& 
     return false;
   }
   XexInfo patch;
-  return ParseXex(patch_bytes, patch, reason) && ValidatePatch(base, patch, patch_bytes, reason);
+  return ParseXex(patch_bytes, patch, reason) && ValidatePatch(base, patch, patch_bytes, reason) &&
+         ValidateTu8Payload(game_root, reason);
 }
 
 }  // namespace
@@ -966,8 +1013,12 @@ Result InstallTitleUpdate(const std::filesystem::path& game_root,
 
     std::vector<PublishItem> publish = {
         {staged_patch, game_root / "default.xexp", game_root / ".default.xexp-backup"},
-        {staged_update, game_root / "update", game_root / ".update-backup"},
     };
+    // A raw default.xexp carries no update payload. Publishing its empty
+    // staging directory would replace an existing, complete game/update.
+    if (!update->raw_patch) {
+      publish.push_back({staged_update, game_root / "update", game_root / ".update-backup"});
+    }
     if (!PublishDirectories(publish, result.error)) {
       return fail(std::move(result.error));
     }

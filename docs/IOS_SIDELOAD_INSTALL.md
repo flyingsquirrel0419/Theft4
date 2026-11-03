@@ -137,6 +137,8 @@ expects the output of Theft4's validated staging process. The staging process:
 - verifies the exact USA retail base and matching TU8 pair;
 - copies `default.xex` from the base game;
 - extracts the validated patch as the sibling file `default.xexp`;
+- copies the title update's own payload (TU8 shaders, data and text) into
+  `update/`;
 - preserves the base archives and extracts their required loose-file trees;
 - adds the required `aes_key.bin` and `.install-manifest`.
 
@@ -171,12 +173,16 @@ game/
 ├── common/
 ├── xbox360/
 ├── audio/
-└── update/              # present when staging an STFS/SVOD TU package
+└── update/              # required: TU8 payload from the STFS/SVOD TU package
 ```
 
 `default.xex` and `default.xexp` must be siblings at the root of `game`.
-Do not put `default.xexp` only inside `update/`. If the title update was supplied
-to the staging tool as a raw `default.xexp`, no `update/` directory is required.
+Do not put `default.xexp` only inside `update/`. The `update/` directory is
+required: TU8 ships files that the patched game opens from it, including
+`update/shaders/fxl_final/water_e2.fxc`. Without them the game crashes with
+`InvalidFunctionTrap` while loading the first mission ("The Cousins Bellic").
+Stage from the title-update **package** (`TU_1A581VI_...`), not from a raw
+`default.xexp`, because a raw patch file does not carry this payload.
 Do not add a second nesting level such as `game/game/default.xex`.
 
 ## 4. Copy the files to the device
@@ -207,7 +213,7 @@ On My iPhone/iPad/
         ├── common/
         ├── xbox360/
         ├── audio/
-        └── update/      # only when produced by staging
+        └── update/      # required TU8 payload (shaders/, data/, text/, update.img)
 ```
 
 Do not copy the ISO, the unopened title-update package, the outer staging
@@ -281,6 +287,7 @@ different private container and is not migrated automatically.
 |---|---|
 | `default.xex` is missing | The prepared folder was nested as `game/game`. Move the inner folder's contents up one level. |
 | `default.xexp` is missing | The TU package itself was copied instead of being staged. Run the validated staging process and copy its sibling `default.xexp`. |
+| Title Update 8 files are missing from the game's update folder | The title update was supplied as a raw `default.xexp`, so `update/` was never created. In Theft4, select the TU8 package file (`TU_1A581VI_...`), or re-stage from the package and copy `game/update` to the device. |
 | TU8 or patch mismatch | The update is for another base revision or region. Use the exact `0.0.0.5 → 0.0.8.5` update described above. |
 | App still shows no game after copying | The transfer may still be running or may have gone to iCloud Drive instead of **On My iPhone/iPad → Theft4 → game**. |
 | Files disappear after reinstalling | Uninstalling an iOS app removes its container. Update in place where possible and keep separate backups of game data and saves. |
