@@ -19,3 +19,16 @@ bool theft4_ios_audio_output_submit(theft4_ios_audio_output* output,
 // advanced by the real audio callback as blocks are consumed.
 uint64_t theft4_ios_audio_output_requested_blocks(
     const theft4_ios_audio_output* output);
+
+// App lifecycle and audio-session ownership. The game keeps one playback
+// output; these calls stop it while Theft4 is in the background (the host app,
+// e.g. LiveContainer, may hold the "audio" background mode, so iOS would
+// otherwise keep playing) and resume it on return. Safe to call at any time,
+// including before any output exists.
+#ifdef __cplusplus
+extern "C" {
+#endif
+void theft4_ios_audio_set_app_active(bool active);
+#ifdef __cplusplus
+}
+#endif

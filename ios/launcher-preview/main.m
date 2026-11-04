@@ -31,7 +31,7 @@
     self.launcher.godMode.on = [args containsObject:@"--god-mode"];
     self.launcher.unlimitedAmmo.on = [args containsObject:@"--unlimited-ammo"];
     self.launcher.nativeAspect.on = [args containsObject:@"--native-aspect"];
-    self.launcher.statusLabel.text = @"LAUNCHER PREVIEW  /  NO GAME RUNTIME";
+    self.launcher.statusLabel.text = @"Launcher preview · no game runtime";
     self.launcher.detailLabel.text = @"Isolated simulator UI preview.\nNo game files, saves or runtime are accessed.";
     [self.launcher refreshConfigurationSummary];
     [self.launcher.startButton addTarget:self action:@selector(retire)
@@ -90,6 +90,10 @@
         }
     }
     if ([args containsObject:@"--retire"]) [self retire];
+    if ([args containsObject:@"--locked"]) {
+        [self.launcher setSessionLocked:YES];
+        [self.launcher showNotice:@"The game was already launched. Quit and reopen Theft4 to change this."];
+    }
     if ([args containsObject:@"--frame-time-preview"]) {
         [self.launcher retireScene];
         theft4_frame_time_snapshot snapshot = {0};

@@ -27,6 +27,7 @@
 @property(nonatomic, readonly) UISegmentedControl *modelDetail;
 @property(nonatomic, readonly) UISegmentedControl *reflectionQuality;
 @property(nonatomic, readonly) UISegmentedControl *antiAliasing;
+@property(nonatomic, readonly) UISegmentedControl *audioVolume;
 @property(nonatomic, readonly) UISwitch *performanceCapture;
 @property(nonatomic, readonly) UISwitch *skipIntro;
 @property(nonatomic, readonly) UISwitch *customTimeCycle;
@@ -45,4 +46,8 @@
 - (void)refreshConfigurationSummary;
 - (void)setActive:(BOOL)active;
 - (void)retireScene;
+// Short, self-dismissing feedback for an action that cannot run right now.
+- (void)showNotice:(NSString *)message;
+// Locks the controls that only apply to a fresh game launch, and says why.
+- (void)setSessionLocked:(BOOL)locked;
 @end

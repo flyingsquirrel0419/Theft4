@@ -10,6 +10,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <fstream>
 #include <string_view>
@@ -120,6 +121,11 @@ static std::vector<uint8_t> ReadExecutable(const std::filesystem::path& path) {
     return bytes;
 }
 
+static bool DeepVerifyRequested() {
+    const char* value = std::getenv("THEFT4_DEEP_VERIFY");
+    return value && std::strcmp(value, "1") == 0;
+}
+
 int theft4_prepare_game(const char* game_directory, const char* support_directory,
                        theft4_boot_event_fn event, void* context) {
     static std::atomic_flag running = ATOMIC_FLAG_INIT;
@@ -137,6 +143,12 @@ int theft4_prepare_game(const char* game_directory, const char* support_director
         std::string reason;
         if (!gta4::install::IsInstallReady(game_directory, &reason)) {
             event(context, reason.c_str());
+        } else if (!DeepVerifyRequested()) {
+            // The user-facing check stops at the install validator. Building a
+            // runtime here would consume process-wide one-shot state that Play
+            // needs, and a pre-patched default.xex has no default.xexp to load.
+            event(context, "Game files and Title Update 8 verified; ready to play");
+            status = 0;
         } else {
             event(context, "Game and TU8 verified on this device");
             event(context, "Initializing Xbox runtime, memory, and filesystem");
@@ -154,15 +166,20 @@ int theft4_prepare_game(const char* game_directory, const char* support_director
                 rex::runtime::XexModule base(runtime.function_dispatcher(), runtime.kernel_state());
                 rex::runtime::XexModule patch(runtime.function_dispatcher(), runtime.kernel_state());
                 const auto base_bytes = ReadExecutable(std::filesystem::path(game_directory) / "default.xex");
-                const auto patch_bytes = ReadExecutable(std::filesystem::path(game_directory) / "default.xexp");
                 if (!base.Load("default.xex", "game:/default.xex", base_bytes.data(), base_bytes.size()))
                     throw std::runtime_error("Xbox executable data load failed");
-                event(context, "Xbox executable loaded; applying TU8 in memory");
-                if (!patch.Load("default.xexp", "game:/default.xexp", patch_bytes.data(), patch_bytes.size()))
-                    throw std::runtime_error("Xbox title update load failed");
-                const int patch_status = patch.ApplyPatch(&base);
-                if (patch_status != 0)
-                    throw std::runtime_error("Xbox title update application failed: " + std::to_string(patch_status));
+                const auto* loaded = base.opt_execution_info();
+                if (!loaded || loaded->version_value != 0x00000805) {
+                    // Only a base executable needs the delta patch; an install
+                    // with a pre-patched default.xex has no default.xexp.
+                    event(context, "Xbox executable loaded; applying TU8 in memory");
+                    const auto patch_bytes = ReadExecutable(std::filesystem::path(game_directory) / "default.xexp");
+                    if (!patch.Load("default.xexp", "game:/default.xexp", patch_bytes.data(), patch_bytes.size()))
+                        throw std::runtime_error("Xbox title update load failed");
+                    const int patch_status = patch.ApplyPatch(&base);
+                    if (patch_status != 0)
+                        throw std::runtime_error("Xbox title update application failed: " + std::to_string(patch_status));
+                }
                 const auto* info = base.opt_execution_info();
                 if (!info || info->version_value != 0x00000805 || !base.is_valid_executable())
                     throw std::runtime_error("Patched Xbox executable verification failed");
@@ -176,7 +193,7 @@ int theft4_prepare_game(const char* game_directory, const char* support_director
         event(context, error.what());
     }
     rex::ShutdownLogging();
-    if (status == 0)
+    if (status == 0 && DeepVerifyRequested())
         event(context, "Runtime initialized and TU8 loaded successfully; stopped before game execution");
     return status;
 }

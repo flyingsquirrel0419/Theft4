@@ -50,8 +50,10 @@ for orient in portrait landscape; do
     shoot "$phone" "phone-$orient-$page" --$orient --$page
   done
 done
+shoot "$phone" "phone-portrait-locked" --portrait --display --locked
 if [[ -n "$pad" ]]; then
   shoot "$pad" "pad-landscape-play" --landscape
   shoot "$pad" "pad-landscape-display" --landscape --display
+  shoot "$pad" "pad-portrait-play" --portrait
 fi
 ls -la "$out"

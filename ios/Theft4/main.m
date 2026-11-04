@@ -733,7 +733,9 @@ static void bootEvent(void *context, const char *event) {
         @"Theft4ShowCPUUsage": @NO,
         @"Theft4ShowFPS": @NO,
         @"Theft4ShowFrameTime": @NO,
-        @"Theft4ShowTouchControls": @NO,
+        // Phones usually have no controller attached; show the overlay by default.
+        @"Theft4ShowTouchControls": @(UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone),
+        @"Theft4AudioVolume": @1,
         @"Theft4AnisotropicFiltering": @(!_legacyIPadProfile),
         @"Theft4EnhancedOutput1080p": @(!_legacyIPadProfile),
         @"Theft4ExperimentalFSRBoost": @NO,
@@ -822,6 +824,10 @@ static void bootEvent(void *context, const char *event) {
     _bringupOverlay.skipIntro.on = ![NSUserDefaults.standardUserDefaults objectForKey:@"Theft4SkipIntro"] ||
         [NSUserDefaults.standardUserDefaults boolForKey:@"Theft4SkipIntro"];
     [_bringupOverlay.skipIntro addTarget:self action:@selector(skipIntroChanged:)
+        forControlEvents:UIControlEventValueChanged];
+    _bringupOverlay.audioVolume.selectedSegmentIndex = MAX(0, MIN(2,
+        [NSUserDefaults.standardUserDefaults integerForKey:@"Theft4AudioVolume"]));
+    [_bringupOverlay.audioVolume addTarget:self action:@selector(audioVolumeChanged:)
         forControlEvents:UIControlEventValueChanged];
     _bringupOverlay.godMode.on = [NSUserDefaults.standardUserDefaults boolForKey:@"Theft4ModGodMode"];
     _bringupOverlay.unlimitedAmmo.on = [NSUserDefaults.standardUserDefaults boolForKey:@"Theft4ModUnlimitedAmmo"];
@@ -937,7 +943,7 @@ static void bootEvent(void *context, const char *event) {
         NSArray *savedKeys = @[@"Theft4GraphicsPreset",@"Theft4LabRenderHeight",@"Theft4LabFSREnabled",
             @"Theft4ShadowQuality",@"Theft4DrawDistance",@"Theft4ModelDetail",@"Theft4ReflectionQuality",
             @"Theft4AntiAliasing",@"Theft4AnisotropicFiltering",@"Theft4MotionBlur",@"Theft4DepthOfField",
-            @"Theft4EnhancedOutput1080p",@"Theft4ExperimentalFSRBoost"];
+            @"Theft4EnhancedOutput1080p",@"Theft4ExperimentalFSRBoost",@"Theft4Sharpening"];
         NSMutableDictionary *previous = [NSMutableDictionary new];
         for (NSString *key in savedKeys) {id value=[speedDefaults objectForKey:key];if(value)previous[key]=value;}
         [speedDefaults setObject:previous forKey:@"Theft4PreviousGraphicsSettings107"];
@@ -1017,7 +1023,8 @@ static void bootEvent(void *context, const char *event) {
     UILongPressGestureRecognizer *marker = [[UILongPressGestureRecognizer alloc]
         initWithTarget:self action:@selector(markPerformanceScene:)];
     [_frameTimeView addGestureRecognizer:marker];
-    [self.view addSubview:_frameTimeView];
+    // Keep on-screen buttons (LB/RB/RT/Y share the top-right corner) above the graph.
+    [self.view insertSubview:_frameTimeView belowSubview:_touchControls];
     _frameTimeTop = [_frameTimeView.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:52];
     [NSLayoutConstraint activateConstraints:@[_frameTimeTop,
         [_frameTimeView.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-10],
@@ -1691,10 +1698,22 @@ static void bootEvent(void *context, const char *event) {
             self->_saveTransferBusy = NO;
             if (output) {
                 [self record:@"saves.export_completed"];
-                [self showSaveMessage:@"SAVES EXPORTED"
-                             detail:[NSString stringWithFormat:
-                    @"Open Files → On My iPhone/iPad → Theft4 → Save Exports → %@. Copy this entire folder to your backup location.",
-                    output.lastPathComponent]];
+                // Under hosts such as LiveContainer, Documents is not shown as
+                // "Theft4" in Files; offer a share sheet that works everywhere.
+                UIAlertController *done = [UIAlertController alertControllerWithTitle:@"SAVES EXPORTED"
+                    message:[NSString stringWithFormat:
+                        @"Saved as Save Exports → %@ in this app's Files folder. Use Share to copy it anywhere.",
+                        output.lastPathComponent] preferredStyle:UIAlertControllerStyleAlert];
+                [done addAction:[UIAlertAction actionWithTitle:@"Share…" style:UIAlertActionStyleDefault
+                    handler:^(__unused UIAlertAction *action) {
+                        UIActivityViewController *share = [[UIActivityViewController alloc]
+                            initWithActivityItems:@[output] applicationActivities:nil];
+                        share.popoverPresentationController.sourceView = self->_exportSavesButton;
+                        share.popoverPresentationController.sourceRect = self->_exportSavesButton.bounds;
+                        [self presentViewController:share animated:YES completion:nil];
+                    }]];
+                [done addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
+                [self presentViewController:done animated:YES completion:nil];
             } else {
                 [self record:@"saves.export_failed"];
                 [self showSaveMessage:@"SAVE EXPORT FAILED"
@@ -2067,15 +2086,27 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
 }
 
 - (void)applyFrameSpeedGraphicsPreset {
-    if (!_bringupOverlay.renderResolution || _executionAttempted) return;
+    if (!_bringupOverlay.renderResolution) return;
+    if (_executionAttempted) { [self noticeSessionLocked]; return; }
     [self applyFrameSpeedGraphicsChoices];[self displaySettingsChanged:nil];
     [NSUserDefaults.standardUserDefaults setObject:@"frame-speed" forKey:@"Theft4GraphicsPreset"];
 }
 
+- (void)noticeSessionLocked {
+    [_bringupOverlay showNotice:@"The game was already launched. Quit and reopen Theft4 to change this."];
+}
+
+- (void)audioVolumeChanged:(UISegmentedControl *)sender {
+    [NSUserDefaults.standardUserDefaults setInteger:sender.selectedSegmentIndex forKey:@"Theft4AudioVolume"];
+    [_bringupOverlay refreshConfigurationSummary];
+}
+
 - (void)restorePreviousGraphicsPreset {
-    if (!_bringupOverlay.renderResolution || _executionAttempted) return;
+    if (!_bringupOverlay.renderResolution) return;
+    if (_executionAttempted) { [self noticeSessionLocked]; return; }
     NSUserDefaults *defaults=NSUserDefaults.standardUserDefaults;
-    NSDictionary *saved=[defaults dictionaryForKey:@"Theft4PreviousGraphicsSettings107"];if(!saved)return;
+    NSDictionary *saved=[defaults dictionaryForKey:@"Theft4PreviousGraphicsSettings107"];
+    if(!saved){[_bringupOverlay showNotice:@"No previous graphics settings were saved."];return;}
     for(NSString *key in saved)[defaults setObject:saved[key] forKey:key];
     NSArray<UISwitch *> *toggles=@[_anisotropicFiltering,_motionBlur,_depthOfField,_enhancedOutput,_fsrBoost];
     NSArray *keys=@[@"Theft4AnisotropicFiltering",@"Theft4MotionBlur",@"Theft4DepthOfField",@"Theft4EnhancedOutput1080p",@"Theft4ExperimentalFSRBoost"];
@@ -2109,14 +2140,16 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
 }
 
 - (void)applyOriginalGraphicsPreset {
-    if (!_bringupOverlay.renderResolution || _executionAttempted) return;
+    if (!_bringupOverlay.renderResolution) return;
+    if (_executionAttempted) { [self noticeSessionLocked]; return; }
     [self applyOriginalGraphicsChoices];
     [self displaySettingsChanged:nil];
     [NSUserDefaults.standardUserDefaults setObject:@"original" forKey:@"Theft4GraphicsPreset"];
 }
 
 - (void)applyLowPowerPreset {
-    if (!_bringupOverlay.renderResolution || _executionAttempted) return;
+    if (!_bringupOverlay.renderResolution) return;
+    if (_executionAttempted) { [self noticeSessionLocked]; return; }
     [self applyOriginalGraphicsChoices];
     switch (automaticGraphicsTier()) {
         case Theft4AutomaticGraphicsTierLow:
@@ -2463,7 +2496,7 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
     if (_core && theft4_core_get_snapshot(_core, &snapshot) == THEFT4_OK) {
         NSArray *states = @[@"Core ready", @"Core active", @"Core paused", @"Core stopped"];
         _status.text = _failure ?: (_bootStatus ?: states[snapshot.state]);
-        _detail.text = [NSString stringWithFormat:@"Platform  %s\nCore      %s\nC ABI     %u\nPage size %llu bytes\nGame progress is reported above.\n\nLogs: System → Download Latest Log Capture",
+        _detail.text = [NSString stringWithFormat:@"Platform  %s\nCore      %s\nC ABI     %u\nPage size %llu bytes\nGame progress is reported above.\n\nLogs: System → Diagnostics → Export Latest Log Capture",
             snapshot.platform, snapshot.core_version, snapshot.abi_version, (unsigned long long)snapshot.host_page_bytes];
     } else {
         _status.text = _failure ?: @"Core stopped";
@@ -2513,7 +2546,7 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
     // virtual buttons that may have been pressed while the tap was forming.
     [_touchControls releaseAllTouches];
     UIAlertController *menu = [UIAlertController alertControllerWithTitle:@"GAME MENU"
-        message:@"Returning to the main menu ends this game session and closes Theft4. Reopen the app to change any graphics setting before a fresh launch. Save your progress first."
+        message:@"Quitting ends this game session and closes the app (inside LiveContainer this closes LiveContainer too). Reopen it to change settings before a fresh launch. Save your progress first."
         preferredStyle:UIAlertControllerStyleAlert];
     NSString *controlsTitle = _showControls.on ? @"Hide On-Screen Controls" : @"Show On-Screen Controls";
     [menu addAction:[UIAlertAction actionWithTitle:controlsTitle style:UIAlertActionStyleDefault
@@ -2523,7 +2556,7 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
             self->_touchControls.active = self->_sceneActive && self->_showControls.on;
             [self record:self->_showControls.on ? @"ui.touch_controls_shown" : @"ui.touch_controls_hidden"];
         }]];
-    [menu addAction:[UIAlertAction actionWithTitle:@"Quit Game · Reopen to Main Menu"
+    [menu addAction:[UIAlertAction actionWithTitle:@"Quit Game (Closes the App)"
         style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action) {
             [self returnToLauncherDuringGame];
         }]];
@@ -3033,7 +3066,17 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
 #ifdef THEFT4_BC_TEXTURE_COMPATIBILITY
     if (_textureCacheDeleting || _texturePreparation.running) return;
 #endif
-    if (_loading || _executionAttempted || _saveTransferBusy || !game || !_supportURL || _failure) return;
+    if (_loading) { [_bringupOverlay showNotice:@"Already working — please wait."]; return; }
+    if (_executionAttempted) {
+        [_bringupOverlay showNotice:@"The game runs once per app session. Quit and reopen Theft4."];
+        return;
+    }
+    if (_saveTransferBusy) { [_bringupOverlay showNotice:@"Wait for the save transfer to finish."]; return; }
+    if (_failure) { [_bringupOverlay showNotice:_failure]; return; }
+    if (!game || !_supportURL) {
+        [_bringupOverlay showNotice:@"The game folder is not available yet."];
+        return;
+    }
 #ifndef THEFT4_HAS_GAME_STARTUP
     if (execute) return;
 #endif
@@ -3053,6 +3096,9 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
     if (execute) {
         // Resolve the shipped asset before consuming this one-shot runtime.
         // Disabling the mod explicitly clears any previous launch override.
+        static const char *const kAudioGains[] = {"1.0", "2.0", "2.8"};
+        setenv("THEFT4_AUDIO_GAIN",
+               kAudioGains[MAX(0, MIN(2, _bringupOverlay.audioVolume.selectedSegmentIndex))], 1);
         setenv("THEFT4_MOD_GOD_MODE", _bringupOverlay.godMode.on ? "1" : "0", 1);
         setenv("THEFT4_MOD_UNLIMITED_AMMO", _bringupOverlay.unlimitedAmmo.on ? "1" : "0", 1);
         NSString *timeCycle = _bringupOverlay.customTimeCycle.on
@@ -3144,6 +3190,13 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
         _bringupOverlay.unlimitedAmmo.enabled = NO;
         _bringupOverlay.frameSpeedButton.enabled = NO;
         _bringupOverlay.restoreGraphicsButton.enabled = NO;
+        _bringupOverlay.lowPowerButton.enabled = NO;
+        _bringupOverlay.originalPresetButton.enabled = NO;
+        _bringupOverlay.fsrUpscaling.enabled = NO;
+        _bringupOverlay.skipIntro.enabled = NO;
+        _bringupOverlay.audioVolume.enabled = NO;
+        _performanceCapture.enabled = NO;
+        [_bringupOverlay setSessionLocked:YES];
         // This is a next-process setting, but users can still prepare the
         // comparison while viewing the in-game launcher. The saved choice is
         // applied only when a fresh game runtime is created after relaunch.
@@ -3183,11 +3236,32 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
             self->_start.enabled = !self->_executionAttempted;
             [self record:execute ? @"boot.execution_attempt_returned" :
                 (result == 0 ? @"boot.preparation_completed" : @"boot.preparation_failed")];
+            if (execute && !self->_gamePresentation) [self showLaunchFailure];
+            else if (!execute) [self->_bringupOverlay showNotice:result == 0
+                ? @"Game files verified" : @"Verification failed — see the status above"];
         });
     });
 #else
     [self bootEvent:@"This build does not include the game loader."];
 #endif
+}
+
+- (void)showLaunchFailure {
+    // The recompiled runtime is one-shot per process, so a failed start cannot
+    // be retried in place. Explain that instead of leaving a dead Play button.
+    NSString *reason = _failure ?: _bootStatus ?: @"The game stopped before it started.";
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"THE GAME COULD NOT START"
+        message:[NSString stringWithFormat:@"%@\n\nFix the problem (System → Verify Game Files), then quit and reopen Theft4 to try again. You can export logs from System → Diagnostics first.", reason]
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Stay in Launcher" style:UIAlertActionStyleCancel
+        handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Quit Theft4" style:UIAlertActionStyleDestructive
+        handler:^(__unused UIAlertAction *action) {
+            [NSUserDefaults.standardUserDefaults synchronize];
+            _Exit(0);
+        }]];
+    if (self.presentedViewController) return;
+    [self presentViewController:alert animated:YES completion:nil];
 }
 
 - (BOOL)accept:(theft4_result)result operation:(NSString *)operation {
@@ -3318,6 +3392,10 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
 }
 @end
 
+#ifdef THEFT4_HAS_GAME_STARTUP
+extern void theft4_ios_audio_set_app_active(bool active);
+#endif
+
 @interface Theft4SceneDelegate : UIResponder <UIWindowSceneDelegate>
 @property(nonatomic, strong) UIWindow *window;
 @property(nonatomic, strong) Theft4ViewController *controller;
@@ -3332,8 +3410,20 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
 }
 - (void)sceneDidBecomeActive:(UIScene *)scene { [self.controller activate]; }
 - (void)sceneWillResignActive:(UIScene *)scene { [self.controller pause]; }
-- (void)sceneDidEnterBackground:(UIScene *)scene { [self.controller record:@"scene.background"]; }
-- (void)sceneWillEnterForeground:(UIScene *)scene { [self.controller record:@"scene.foreground"]; }
+- (void)sceneDidEnterBackground:(UIScene *)scene {
+#ifdef THEFT4_HAS_GAME_STARTUP
+    // Hosts such as LiveContainer may declare the "audio" background mode, so
+    // the game's output unit would keep playing after Theft4 leaves the screen.
+    theft4_ios_audio_set_app_active(false);
+#endif
+    [self.controller record:@"scene.background"];
+}
+- (void)sceneWillEnterForeground:(UIScene *)scene {
+#ifdef THEFT4_HAS_GAME_STARTUP
+    theft4_ios_audio_set_app_active(true);
+#endif
+    [self.controller record:@"scene.foreground"];
+}
 - (void)windowScene:(UIWindowScene *)windowScene didUpdateCoordinateSpace:(id<UICoordinateSpace>)previousCoordinateSpace
     interfaceOrientation:(UIInterfaceOrientation)previousInterfaceOrientation traitCollection:(UITraitCollection *)previousTraitCollection {
     [self.controller recordWindowState:@"window.geometry_changed"];

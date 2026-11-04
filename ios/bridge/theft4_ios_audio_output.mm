@@ -28,6 +28,12 @@ constexpr uint32_t kRingFrames = 16384;
 constexpr uint32_t kPrerollBlocks = 32;
 constexpr uint32_t kPrerollFrames = kGuestFramesPerBlock * kPrerollBlocks;
 constexpr uint32_t kRecoveryBlocks = 8;
+// The 5.1 -> stereo downmix is normalized so coincident full-scale channels
+// cannot overflow, which leaves typical game mixes ~7-10 dB below the console's
+// stereo output. That is barely audible on headphones (iOS also caps headphone
+// level). Apply make-up gain and a soft knee limiter instead of hard clipping.
+constexpr float kDefaultOutputGain = 2.0f;
+constexpr float kLimiterKnee = 0.80f;
 
 }  // namespace
 
@@ -47,6 +53,8 @@ struct theft4_ios_audio_output {
   std::atomic<uint64_t> clipped_samples{0};
   std::atomic<uint64_t> nonfinite_samples{0};
   std::atomic<bool> playback_ready{false};
+  std::atomic<bool> unit_running{false};
+  float output_gain = kDefaultOutputGain;
   uint32_t recovery_frames = kGuestFramesPerBlock * kRecoveryBlocks;
   bool playback_started = false;  // AudioUnit callback thread only.
   uint32_t fade_in_frames = 0;    // AudioUnit callback thread only.
@@ -83,6 +91,15 @@ float SanitizeSample(float sample, uint64_t* clipped, uint64_t* nonfinite) {
   return sample;
 }
 
+float SoftLimit(float sample) {
+  const float magnitude = std::fabs(sample);
+  if (magnitude <= kLimiterKnee) return sample;
+  constexpr float headroom = 1.0f - kLimiterKnee;
+  const float limited =
+      kLimiterKnee + headroom * std::tanh((magnitude - kLimiterKnee) / headroom);
+  return std::copysign(limited, sample);
+}
+
 OSStatus RenderAudio(void* context, AudioUnitRenderActionFlags*,
                      const AudioTimeStamp*, UInt32, UInt32 frame_count,
                      AudioBufferList* buffers) {
@@ -99,8 +116,12 @@ OSStatus RenderAudio(void* context, AudioUnitRenderActionFlags*,
                               {frame_count, queued_frames, playback_ready,
                                output->read_frame.load(std::memory_order_relaxed), write});
   if (!playback_ready) {
-    const uint32_t restart_frames =
-        output->playback_started ? output->recovery_frames : kPrerollFrames;
+    // Bluetooth/AirPlay routes can request hardware blocks larger than the
+    // recovery threshold. Restarting below one full block would underrun on
+    // the very next callback and flap between silence and playback forever.
+    const uint32_t restart_frames = std::max<uint32_t>(
+        output->playback_started ? output->recovery_frames : kPrerollFrames,
+        std::min<uint32_t>(frame_count, kRingFrames / 2));
     if (queued_frames < restart_frames) {
       auto& silence = output->playback_started ? output->recovery_silence_frames
                                                : output->startup_silence_frames;
@@ -216,7 +237,145 @@ bool ConfigureAudioSession() {
               session.outputLatency * 1000.0);
   return true;
 }
+
+// Lifecycle state shared by the app (main thread) and session notifications.
+std::mutex g_lifecycle_mutex;
+theft4_ios_audio_output* g_output = nullptr;  // Guarded by g_lifecycle_mutex.
+bool g_app_active = true;                     // Guarded by g_lifecycle_mutex.
+bool g_interrupted = false;                   // Guarded by g_lifecycle_mutex.
+NSArray<id>* g_observers = nil;               // Guarded by g_lifecycle_mutex.
+
+void StopUnitLocked(theft4_ios_audio_output* output) {
+  if (!output || !output->unit ||
+      !output->unit_running.exchange(false, std::memory_order_acq_rel)) {
+    return;
+  }
+  AudioOutputUnitStop(output->unit);
+  // Rebuild the recovery preroll on restart; queued samples are kept.
+  output->playback_ready.store(false, std::memory_order_relaxed);
+}
+
+void StartUnitLocked(theft4_ios_audio_output* output) {
+  if (!output || !output->unit || !g_app_active || g_interrupted ||
+      output->unit_running.load(std::memory_order_acquire)) {
+    return;
+  }
+  NSError* error = nil;
+  if (![AVAudioSession.sharedInstance setActive:YES error:&error]) {
+    REXLOG_WARN("Theft4 audio session reactivation failed: {}",
+                error.localizedDescription.UTF8String ?: "unknown error");
+  }
+  const OSStatus status = AudioOutputUnitStart(output->unit);
+  if (status == noErr) {
+    output->unit_running.store(true, std::memory_order_release);
+  } else {
+    REXLOG_WARN("Theft4 AudioUnit restart failed with status {}", int32_t(status));
+  }
+}
+
+void ApplyLifecycleLocked() {
+  if (!g_output) return;
+  if (g_app_active && !g_interrupted) {
+    StartUnitLocked(g_output);
+  } else {
+    StopUnitLocked(g_output);
+    if (!g_app_active) {
+      // Let other apps' audio resume while Theft4 is in the background.
+      [AVAudioSession.sharedInstance
+            setActive:NO
+          withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation
+                error:nil];
+    }
+  }
+}
+
+void InstallSessionObserversLocked() {
+  if (g_observers) return;
+  NSNotificationCenter* center = NSNotificationCenter.defaultCenter;
+  NSOperationQueue* queue = NSOperationQueue.mainQueue;
+  id interruption = [center
+      addObserverForName:AVAudioSessionInterruptionNotification
+                  object:nil
+                   queue:queue
+              usingBlock:^(NSNotification* note) {
+                const auto type = static_cast<AVAudioSessionInterruptionType>(
+                    [note.userInfo[AVAudioSessionInterruptionTypeKey]
+                        unsignedIntegerValue]);
+                std::lock_guard lock(g_lifecycle_mutex);
+                if (type == AVAudioSessionInterruptionTypeBegan) {
+                  g_interrupted = true;
+                  // iOS has already stopped the unit; record it.
+                  if (g_output) {
+                    g_output->unit_running.store(false, std::memory_order_release);
+                    g_output->playback_ready.store(false, std::memory_order_relaxed);
+                  }
+                } else {
+                  g_interrupted = false;
+                }
+                REXLOG_INFO("Theft4 audio interruption {}",
+                            g_interrupted ? "began" : "ended");
+                ApplyLifecycleLocked();
+              }];
+  id route = [center
+      addObserverForName:AVAudioSessionRouteChangeNotification
+                  object:nil
+                   queue:queue
+              usingBlock:^(NSNotification* note) {
+                const auto reason = static_cast<AVAudioSessionRouteChangeReason>(
+                    [note.userInfo[AVAudioSessionRouteChangeReasonKey]
+                        unsignedIntegerValue]);
+                AVAudioSession* session = AVAudioSession.sharedInstance;
+                AVAudioSessionPortDescription* port =
+                    session.currentRoute.outputs.firstObject;
+                REXLOG_INFO(
+                    "Theft4 audio route changed (reason {}): {} rate={} Hz "
+                    "io_buffer={} ms latency={} ms",
+                    int(reason), port.portType.UTF8String ?: "none",
+                    session.sampleRate, session.IOBufferDuration * 1000.0,
+                    session.outputLatency * 1000.0);
+                std::lock_guard lock(g_lifecycle_mutex);
+                if (!g_output || !g_app_active || g_interrupted) return;
+                // Headphones and Bluetooth routes renegotiate the hardware
+                // format; a RemoteIO unit can be left stopped by the switch.
+                // Re-prime and restart so the new route receives audio.
+                if (g_output->unit) {
+                  Boolean running = false;
+                  UInt32 size = sizeof(running);
+                  if (AudioUnitGetProperty(g_output->unit,
+                                           kAudioOutputUnitProperty_IsRunning,
+                                           kAudioUnitScope_Global, 0, &running,
+                                           &size) == noErr &&
+                      !running) {
+                    g_output->unit_running.store(false, std::memory_order_release);
+                  }
+                }
+                g_output->playback_ready.store(false, std::memory_order_relaxed);
+                StartUnitLocked(g_output);
+              }];
+  id reset = [center
+      addObserverForName:AVAudioSessionMediaServicesWereResetNotification
+                  object:nil
+                   queue:queue
+              usingBlock:^(NSNotification*) {
+                std::lock_guard lock(g_lifecycle_mutex);
+                REXLOG_WARN("Theft4 audio media services were reset");
+                if (!g_output) return;
+                ConfigureAudioSession();
+                g_output->unit_running.store(false, std::memory_order_release);
+                g_output->playback_ready.store(false, std::memory_order_relaxed);
+                ApplyLifecycleLocked();
+              }];
+  g_observers = @[ interruption, route, reset ];
+}
 }  // namespace
+
+extern "C" void theft4_ios_audio_set_app_active(bool active) {
+  std::lock_guard lock(g_lifecycle_mutex);
+  if (g_app_active == active) return;
+  g_app_active = active;
+  REXLOG_INFO("Theft4 audio app {}", active ? "foreground" : "background");
+  ApplyLifecycleLocked();
+}
 
 theft4_ios_audio_output* theft4_ios_audio_output_create() {
   if (!ConfigureAudioSession()) return nullptr;
@@ -232,6 +391,16 @@ theft4_ios_audio_output* theft4_ios_audio_output_create() {
       REXLOG_WARN(
           "Ignoring invalid THEFT4_AUDIO_RECOVERY_BLOCKS={} (expected 1..{})",
           setting, kPrerollBlocks);
+    }
+  }
+  if (const char* setting = std::getenv("THEFT4_AUDIO_GAIN")) {
+    char* end = nullptr;
+    const float gain = std::strtof(setting, &end);
+    if (end && !*end && std::isfinite(gain) && gain >= 0.25f && gain <= 4.0f) {
+      output->output_gain = gain;
+    } else {
+      REXLOG_WARN("Ignoring invalid THEFT4_AUDIO_GAIN={} (expected 0.25..4)",
+                  setting);
     }
   }
   AudioComponentDescription description{};
@@ -266,7 +435,6 @@ theft4_ios_audio_output* theft4_ios_audio_output_create() {
         kAudioUnitScope_Input, 0, &callback, sizeof(callback));
   }
   if (status == noErr) status = AudioUnitInitialize(output->unit);
-  if (status == noErr) status = AudioOutputUnitStart(output->unit);
   if (status != noErr) {
     REXLOG_ERROR("Theft4 AudioUnit initialization failed with status {}",
                  int32_t(status));
@@ -275,15 +443,36 @@ theft4_ios_audio_output* theft4_ios_audio_output_create() {
     return nullptr;
   }
 
+  {
+    std::lock_guard lock(g_lifecycle_mutex);
+    g_output = output;
+    InstallSessionObserversLocked();
+    StartUnitLocked(output);
+    if (g_app_active && !g_interrupted &&
+        !output->unit_running.load(std::memory_order_acquire)) {
+      g_output = nullptr;
+      AudioUnitUninitialize(output->unit);
+      AudioComponentInstanceDispose(output->unit);
+      delete output;
+      REXLOG_ERROR("Theft4 AudioUnit failed to start");
+      return nullptr;
+    }
+  }
+
   REXLOG_INFO(
       "Theft4 native iOS audio output started: 48 kHz stereo, {}-frame ring, "
-      "{}-frame initial preroll, {}-frame recovery threshold",
-      kRingFrames, kPrerollFrames, output->recovery_frames);
+      "{}-frame initial preroll, {}-frame recovery threshold, gain {:.2f}",
+      kRingFrames, kPrerollFrames, output->recovery_frames, output->output_gain);
   return output;
 }
 
 void theft4_ios_audio_output_destroy(theft4_ios_audio_output* output) {
   if (!output) return;
+  {
+    std::lock_guard lock(g_lifecycle_mutex);
+    if (g_output == output) g_output = nullptr;
+    output->unit_running.store(false, std::memory_order_release);
+  }
   if (output->unit) {
     AudioOutputUnitStop(output->unit);
     AudioUnitUninitialize(output->unit);
@@ -303,6 +492,10 @@ bool theft4_ios_audio_output_submit(theft4_ios_audio_output* output,
   std::array<float, kGuestFramesPerBlock * kChannels> stereo{};
   rex::audio::conversion::sequential_6_BE_to_interleaved_2_LE(
       stereo.data(), guest_samples, guest_frame_count);
+  const float gain = output->output_gain;
+  for (float& sample : stereo) {
+    sample = std::isfinite(sample) ? SoftLimit(sample * gain) : sample;
+  }
 
   std::lock_guard lock(output->producer_mutex);
   const uint64_t read = output->read_frame.load(std::memory_order_acquire);
