@@ -35,6 +35,101 @@ static UIStackView *Stack(NSArray<UIView *> *views, CGFloat spacing) {
     return stack;
 }
 
+// Liberty City amber: one key color for tabs, actions and selection. The light
+// variant is dark enough for 4.5:1 contrast as text on white.
+static UIColor *BrandTint(void) {
+    return [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {
+        return traits.userInterfaceStyle == UIUserInterfaceStyleDark
+            ? [UIColor colorWithRed:1.00 green:0.66 blue:0.20 alpha:1]
+            : [UIColor colorWithRed:0.72 green:0.36 blue:0.00 alpha:1];
+    }];
+}
+
+// A Settings-style icon: a white SF Symbol on a colored rounded square.
+static UIImage *IconTile(NSString *symbol, UIColor *color) {
+    const CGFloat side = 30;
+    UIImage *glyph = [[UIImage systemImageNamed:symbol withConfiguration:
+        [UIImageSymbolConfiguration configurationWithPointSize:15 weight:UIImageSymbolWeightSemibold]]
+        imageWithTintColor:UIColor.whiteColor renderingMode:UIImageRenderingModeAlwaysOriginal];
+    UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(side, side)];
+    UIImage *tile = [renderer imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+        (void)ctx;
+        [color setFill];
+        UIBezierPath *shape = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(0, 0, side, side) cornerRadius:7.5];
+        [shape fill];
+        if (glyph) {
+            CGSize size = glyph.size;
+            const CGFloat scale = MIN(1, MIN(19 / size.width, 19 / size.height));
+            size = CGSizeMake(size.width * scale, size.height * scale);
+            [glyph drawInRect:CGRectMake((side - size.width) / 2, (side - size.height) / 2, size.width, size.height)];
+        }
+    }];
+    return [tile imageWithRenderingMode:UIImageRenderingModeAlwaysOriginal];
+}
+
+// Row title -> icon. Rows without an entry show no icon.
+static UIImage *RowIcon(NSString *title) {
+    static NSDictionary<NSString *, NSArray *> *icons;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        icons = @{
+            @"Resolution": @[@"aspectratio.fill", UIColor.systemBlueColor],
+            @"Internal Resolution": @[@"aspectratio.fill", UIColor.systemBlueColor],
+            @"FSR Upscaling": @[@"sparkles", UIColor.systemPurpleColor],
+            @"1080p Enhanced Output": @[@"sparkles", UIColor.systemPurpleColor],
+            @"FSR Boost": @[@"bolt.fill", UIColor.systemPurpleColor],
+            @"Sharpening": @[@"wand.and.rays", UIColor.systemTealColor],
+            @"Shadows": @[@"shadow", UIColor.systemIndigoColor],
+            @"Draw Distance": @[@"mountain.2.fill", UIColor.systemGreenColor],
+            @"Model Detail": @[@"cube.fill", UIColor.systemOrangeColor],
+            @"Reflections": @[@"drop.fill", UIColor.systemCyanColor],
+            @"Anti-Aliasing": @[@"square.grid.3x3.fill", UIColor.systemPinkColor],
+            @"Texture Filtering": @[@"road.lanes", UIColor.systemBrownColor],
+            @"Motion Blur": @[@"wind", UIColor.systemBlueColor],
+            @"Depth of Field": @[@"camera.aperture", UIColor.systemPurpleColor],
+            @"Touch Controls": @[@"hand.tap.fill", UIColor.systemBlueColor],
+            @"Game Volume": @[@"speaker.wave.3.fill", UIColor.systemPinkColor],
+            @"Frame Rate": @[@"speedometer", UIColor.systemGreenColor],
+            @"Frame Time Graph": @[@"waveform.path.ecg", UIColor.systemOrangeColor],
+            @"CPU Usage": @[@"cpu", UIColor.systemGrayColor],
+            @"ASTC Textures": @[@"square.stack.3d.up.fill", UIColor.systemTealColor],
+            @"Skip Intro Videos": @[@"forward.fill", UIColor.systemIndigoColor],
+            @"Performance Capture": @[@"record.circle", UIColor.systemRedColor],
+            @"Custom Time Cycle": @[@"sun.horizon.fill", UIColor.systemOrangeColor],
+            @"Native Aspect Ratio": @[@"arrow.left.and.right", UIColor.systemBlueColor],
+            @"God Mode": @[@"shield.fill", UIColor.systemRedColor],
+            @"Unlimited Ammo": @[@"infinity", UIColor.systemGrayColor],
+        };
+    });
+    NSArray *entry = icons[title];
+    return entry ? IconTile(entry[0], entry[1]) : nil;
+}
+
+// The Play hero: Liberty City artwork with a scrim so white text stays legible.
+@interface Theft4HeroView : UIView
+@end
+@implementation Theft4HeroView {
+    CAGradientLayer *_scrim;
+}
+- (instancetype)initWithFrame:(CGRect)frame {
+    if (!(self = [super initWithFrame:frame])) return nil;
+    _scrim = [CAGradientLayer layer];
+    _scrim.colors = @[(id)[UIColor colorWithWhite:0 alpha:0].CGColor,
+                      (id)[UIColor colorWithWhite:0 alpha:.35].CGColor,
+                      (id)[UIColor colorWithWhite:0 alpha:.82].CGColor];
+    _scrim.locations = @[@0, @.4, @1];
+    return self;
+}
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    if (_scrim.superlayer != self.layer) [self.layer insertSublayer:_scrim atIndex:1];
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    _scrim.frame = self.bounds;
+    [CATransaction commit];
+}
+@end
+
 static UITableViewCell *PlainCell(void) {
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
     cell.selectionStyle = UITableViewCellSelectionStyleNone;
@@ -138,6 +233,7 @@ static Theft4ListSection *Group(NSString *header, NSArray<UITableViewCell *> *ce
 - (instancetype)initWithFrame:(CGRect)frame {
     if (!(self = [super initWithFrame:frame])) return nil;
     self.backgroundColor = UIColor.systemGroupedBackgroundColor;
+    self.tintColor = BrandTint();
     _owners = [NSMapTable weakToWeakObjectsMapTable];
 
     _table = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStyleInsetGrouped];
@@ -252,6 +348,7 @@ static Theft4ListSection *Group(NSString *header, NSArray<UITableViewCell *> *ce
     UITableViewCell *cell = PlainCell();
     UIListContentConfiguration *content = [UIListContentConfiguration subtitleCellConfiguration];
     content.text = title;
+    content.image = RowIcon(title);
     content.secondaryText = detail;
     content.secondaryTextProperties.color = UIColor.secondaryLabelColor;
     content.secondaryTextProperties.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
@@ -269,7 +366,17 @@ static Theft4ListSection *Group(NSString *header, NSArray<UITableViewCell *> *ce
     NSMutableArray<UIView *> *views = [NSMutableArray new];
     UILabel *heading = Label(UIFontTextStyleBody, UIColor.labelColor);
     heading.text = title;
-    [views addObject:heading];
+    UIImage *icon = RowIcon(title);
+    if (icon) {
+        UIImageView *tile = [[UIImageView alloc] initWithImage:icon];
+        [tile setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+        UIStackView *row = [[UIStackView alloc] initWithArrangedSubviews:@[tile, heading]];
+        row.spacing = 14;
+        row.alignment = UIStackViewAlignmentCenter;
+        [views addObject:row];
+    } else {
+        [views addObject:heading];
+    }
     [views addObject:control];
     if (metrics) [views addObject:metrics];
     if (detail.length) {
@@ -278,7 +385,7 @@ static Theft4ListSection *Group(NSString *header, NSArray<UITableViewCell *> *ce
         [views addObject:note];
     }
     UIStackView *stack = Stack(views, 8);
-    [stack setCustomSpacing:10 afterView:heading];
+    [stack setCustomSpacing:10 afterView:views.firstObject];
     UITableViewCell *cell = PlainCell();
     Embed(cell, stack, 12);
     return cell;
@@ -301,6 +408,7 @@ static Theft4ListSection *Group(NSString *header, NSArray<UITableViewCell *> *ce
     UITableViewCell *cell = PlainCell();
     UIListContentConfiguration *content = [UIListContentConfiguration valueCellConfiguration];
     content.text = title;
+    content.image = RowIcon(title);
     cell.contentConfiguration = content;
     return cell;
 }
@@ -315,6 +423,67 @@ static Theft4ListSection *Group(NSString *header, NSArray<UITableViewCell *> *ce
 - (UITableViewCell *)labelCell:(UILabel *)label {
     UITableViewCell *cell = PlainCell();
     Embed(cell, label, 12);
+    return cell;
+}
+
+- (UITableViewCell *)heroWithButton:(UIButton *)button {
+    Theft4HeroView *hero = [Theft4HeroView new];
+    hero.backgroundColor = [UIColor colorWithRed:.10 green:.12 blue:.18 alpha:1];
+    hero.layer.cornerRadius = 26;
+    hero.layer.cornerCurve = kCACornerCurveContinuous;
+    hero.clipsToBounds = YES;
+
+    NSString *artPath = [NSBundle.mainBundle pathForResource:@"preview" ofType:@"jpg"
+                                                 inDirectory:@"Mods/CustomTimeCycle"];
+    UIImageView *art = [[UIImageView alloc] initWithImage:artPath ? [UIImage imageWithContentsOfFile:artPath] : nil];
+    art.contentMode = UIViewContentModeScaleAspectFill;
+    art.translatesAutoresizingMaskIntoConstraints = NO;
+    [hero insertSubview:art atIndex:0];
+
+    UILabel *eyebrow = Label(UIFontTextStyleFootnote, [UIColor colorWithWhite:1 alpha:.78]);
+    UIFontDescriptor *semibold = [[UIFontDescriptor preferredFontDescriptorWithTextStyle:UIFontTextStyleFootnote]
+        fontDescriptorByAddingAttributes:@{UIFontDescriptorTraitsAttribute:
+            @{UIFontWeightTrait: @(UIFontWeightSemibold)}}];
+    eyebrow.font = [UIFont fontWithDescriptor:semibold size:0];
+    eyebrow.text = @"GRAND THEFT AUTO IV";
+    UILabel *title = Label(UIFontTextStyleTitle1, UIColor.whiteColor);
+    UIFontDescriptor *bold = [[UIFontDescriptor preferredFontDescriptorWithTextStyle:UIFontTextStyleTitle1]
+        fontDescriptorWithSymbolicTraits:UIFontDescriptorTraitBold];
+    title.font = [UIFont fontWithDescriptor:bold size:0];
+    title.text = @"Liberty City";
+    title.accessibilityTraits = UIAccessibilityTraitHeader;
+    UILabel *subtitle = Label(UIFontTextStyleSubheadline, [UIColor colorWithWhite:1 alpha:.85]);
+    subtitle.text = @"The Xbox 360 game, recompiled to run natively.";
+
+    UIStackView *text = Stack(@[eyebrow, title, subtitle], 2);
+    UIStackView *overlay = Stack(@[text, button], 16);
+    overlay.translatesAutoresizingMaskIntoConstraints = NO;
+    [hero addSubview:overlay];
+
+    NSLayoutConstraint *aspect = [hero.heightAnchor constraintEqualToAnchor:hero.widthAnchor multiplier:.72];
+    aspect.priority = UILayoutPriorityDefaultHigh;
+    [NSLayoutConstraint activateConstraints:@[
+        aspect,
+        [hero.heightAnchor constraintLessThanOrEqualToConstant:360],
+        [hero.heightAnchor constraintGreaterThanOrEqualToConstant:250],
+        [art.topAnchor constraintEqualToAnchor:hero.topAnchor],
+        [art.bottomAnchor constraintEqualToAnchor:hero.bottomAnchor],
+        [art.leadingAnchor constraintEqualToAnchor:hero.leadingAnchor],
+        [art.trailingAnchor constraintEqualToAnchor:hero.trailingAnchor],
+        [overlay.leadingAnchor constraintEqualToAnchor:hero.leadingAnchor constant:20],
+        [overlay.trailingAnchor constraintEqualToAnchor:hero.trailingAnchor constant:-20],
+        [overlay.bottomAnchor constraintEqualToAnchor:hero.bottomAnchor constant:-20],
+        [overlay.topAnchor constraintGreaterThanOrEqualToAnchor:hero.topAnchor constant:20]]];
+
+    UITableViewCell *cell = PlainCell();
+    cell.backgroundConfiguration = [UIBackgroundConfiguration clearConfiguration];
+    hero.translatesAutoresizingMaskIntoConstraints = NO;
+    [cell.contentView addSubview:hero];
+    [NSLayoutConstraint activateConstraints:@[
+        [hero.topAnchor constraintEqualToAnchor:cell.contentView.topAnchor],
+        [hero.bottomAnchor constraintEqualToAnchor:cell.contentView.bottomAnchor],
+        [hero.leadingAnchor constraintEqualToAnchor:cell.contentView.leadingAnchor],
+        [hero.trailingAnchor constraintEqualToAnchor:cell.contentView.trailingAnchor]]];
     return cell;
 }
 
@@ -346,6 +515,8 @@ static Theft4ListSection *Group(NSString *header, NSArray<UITableViewCell *> *ce
 #endif
     if (!play) play = [UIButtonConfiguration filledButtonConfiguration];
     play.title = @"Play";
+    play.baseBackgroundColor = BrandTint();
+    play.baseForegroundColor = UIColor.whiteColor;
     play.image = [UIImage systemImageNamed:@"play.fill"];
     play.imagePadding = 8;
     play.buttonSize = UIButtonConfigurationSizeLarge;
@@ -361,10 +532,7 @@ static Theft4ListSection *Group(NSString *header, NSArray<UITableViewCell *> *ce
     _startButton.configuration = play;
     _startButton.accessibilityIdentifier = @"game.start";
     _startButton.accessibilityHint = @"Starts Grand Theft Auto IV. Continue or start a story from the game's menu.";
-    UITableViewCell *playCell = PlainCell();
-    playCell.backgroundConfiguration = [UIBackgroundConfiguration clearConfiguration];
-    Embed(playCell, _startButton, 4);
-    [_owners setObject:_startButton forKey:playCell];
+    UITableViewCell *playCell = [self heroWithButton:_startButton];
 
     _setupResolution = [self value:@"Resolution"];
     _setupShadows = [self value:@"Shadows"];
@@ -372,8 +540,8 @@ static Theft4ListSection *Group(NSString *header, NSArray<UITableViewCell *> *ce
     _setupSound = [self value:@"Game Volume"];
 
     NSArray<Theft4ListSection *> *playPage = @[
-        Group(nil, @[statusCell], nil),
         Group(nil, @[playCell], @"Saves stay with this app. To continue or start a new story, use the game's own menu."),
+        Group(@"Status", @[statusCell], nil),
         Group(@"Current Setup", @[_setupResolution, _setupShadows, _setupDistance, _setupSound],
               @"Change these in Graphics and Interface before you press Play."),
     ];
