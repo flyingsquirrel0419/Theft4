@@ -115,9 +115,9 @@ static UIImage *RowIcon(NSString *title) {
     if (!(self = [super initWithFrame:frame])) return nil;
     _scrim = [CAGradientLayer layer];
     _scrim.colors = @[(id)[UIColor colorWithWhite:0 alpha:0].CGColor,
-                      (id)[UIColor colorWithWhite:0 alpha:.35].CGColor,
-                      (id)[UIColor colorWithWhite:0 alpha:.82].CGColor];
-    _scrim.locations = @[@0, @.4, @1];
+                      (id)[UIColor colorWithWhite:0 alpha:.45].CGColor,
+                      (id)[UIColor colorWithWhite:0 alpha:.85].CGColor];
+    _scrim.locations = @[@0, @.35, @1];
     return self;
 }
 - (void)layoutSubviews {
@@ -371,7 +371,7 @@ static Theft4ListSection *Group(NSString *header, NSArray<UITableViewCell *> *ce
         UIImageView *tile = [[UIImageView alloc] initWithImage:icon];
         [tile setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
         UIStackView *row = [[UIStackView alloc] initWithArrangedSubviews:@[tile, heading]];
-        row.spacing = 14;
+        row.spacing = 16;
         row.alignment = UIStackViewAlignmentCenter;
         [views addObject:row];
     } else {
@@ -435,7 +435,19 @@ static Theft4ListSection *Group(NSString *header, NSArray<UITableViewCell *> *ce
 
     NSString *artPath = [NSBundle.mainBundle pathForResource:@"preview" ofType:@"jpg"
                                                  inDirectory:@"Mods/CustomTimeCycle"];
-    UIImageView *art = [[UIImageView alloc] initWithImage:artPath ? [UIImage imageWithContentsOfFile:artPath] : nil];
+    UIImage *source = artPath ? [UIImage imageWithContentsOfFile:artPath] : nil;
+    if (source.CGImage) {
+        // The capture is letterboxed with an FPS counter above and the minimap
+        // bottom-left; keep only the street scene.
+        const CGFloat w = CGImageGetWidth(source.CGImage), h = CGImageGetHeight(source.CGImage);
+        CGImageRef cropped = CGImageCreateWithImageInRect(source.CGImage,
+            CGRectMake(floor(w * .18), floor(h * .135), floor(w * .82), floor(h * .72)));
+        if (cropped) {
+            source = [UIImage imageWithCGImage:cropped];
+            CGImageRelease(cropped);
+        }
+    }
+    UIImageView *art = [[UIImageView alloc] initWithImage:source];
     art.contentMode = UIViewContentModeScaleAspectFill;
     art.translatesAutoresizingMaskIntoConstraints = NO;
     [hero insertSubview:art atIndex:0];
@@ -509,11 +521,7 @@ static Theft4ListSection *Group(NSString *header, NSArray<UITableViewCell *> *ce
     Embed(statusCell, status, 13);
 
     _startButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    UIButtonConfiguration *play = nil;
-#if defined(__IPHONE_26_0)
-    if (@available(iOS 26.0, *)) play = [UIButtonConfiguration prominentGlassButtonConfiguration];
-#endif
-    if (!play) play = [UIButtonConfiguration filledButtonConfiguration];
+    UIButtonConfiguration *play = [UIButtonConfiguration filledButtonConfiguration];
     play.title = @"Play";
     play.baseBackgroundColor = BrandTint();
     play.baseForegroundColor = UIColor.whiteColor;
