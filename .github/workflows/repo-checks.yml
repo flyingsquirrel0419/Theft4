@@ -1,0 +1,42 @@
+name: Repo · Setup checks
+
+# Fast metadata and setup-script regression tests. The upstream desktop
+# (Linux/Windows/macOS/Arch) builds are not part of this iOS fork and were
+# removed: they fail upstream as well (DXC crash, missing spirv-val, vcpkg).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repo-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  setup-tests:
+    name: Setup tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows is excluded: the setup harness's local test remotes trip over
+        # CRLF checkouts there, and the fork does not ship a Windows build.
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate tracked paths, submodule mappings and patch pins
+        run: python tools/setup_repo.py --check-metadata
+      - name: Exercise clone, pull, migration and recovery with local test remotes
+        run: python tools/test_setup_repo.py
+      - name: Check iOS Release optimization regression guard
+        run: python tests/ios/test_release_build.py
