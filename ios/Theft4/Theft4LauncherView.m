@@ -886,7 +886,7 @@ static UIStackView *Section(NSString *heading, NSArray<UIView *> *rows, NSString
         _layoutConfigured = YES;
         _railMode = railMode;
         _tabStack.axis = railMode ? UILayoutConstraintAxisVertical : UILayoutConstraintAxisHorizontal;
-        _tabStack.distribution = railMode ? UIStackViewDistributionFill : UIStackViewDistributionFillEqually;
+        _tabStack.distribution = UIStackViewDistributionFillEqually;
         _tabStack.spacing = railMode ? 6 : 2;
         for (UIButton *tab in _tabs) {
             UIButtonConfiguration *config = tab.configuration;
