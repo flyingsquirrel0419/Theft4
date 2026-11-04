@@ -105,6 +105,22 @@ static UIImage *RowIcon(NSString *title) {
     return entry ? IconTile(entry[0], entry[1]) : nil;
 }
 
+// The bundled time-cycle capture is letterboxed with an FPS counter above and
+// the minimap bottom-left; keep only the street scene.
+static UIImage *LibertyCityArtwork(void) {
+    NSString *path = [NSBundle.mainBundle pathForResource:@"preview" ofType:@"jpg"
+                                              inDirectory:@"Mods/CustomTimeCycle"];
+    UIImage *source = path ? [UIImage imageWithContentsOfFile:path] : nil;
+    if (!source.CGImage) return source;
+    const CGFloat w = CGImageGetWidth(source.CGImage), h = CGImageGetHeight(source.CGImage);
+    CGImageRef cropped = CGImageCreateWithImageInRect(source.CGImage,
+        CGRectMake(floor(w * .18), floor(h * .135), floor(w * .82), floor(h * .72)));
+    if (!cropped) return source;
+    UIImage *image = [UIImage imageWithCGImage:cropped];
+    CGImageRelease(cropped);
+    return image;
+}
+
 // The Play hero: Liberty City artwork with a scrim so white text stays legible.
 @interface Theft4HeroView : UIView
 @end
@@ -433,21 +449,7 @@ static Theft4ListSection *Group(NSString *header, NSArray<UITableViewCell *> *ce
     hero.layer.cornerCurve = kCACornerCurveContinuous;
     hero.clipsToBounds = YES;
 
-    NSString *artPath = [NSBundle.mainBundle pathForResource:@"preview" ofType:@"jpg"
-                                                 inDirectory:@"Mods/CustomTimeCycle"];
-    UIImage *source = artPath ? [UIImage imageWithContentsOfFile:artPath] : nil;
-    if (source.CGImage) {
-        // The capture is letterboxed with an FPS counter above and the minimap
-        // bottom-left; keep only the street scene.
-        const CGFloat w = CGImageGetWidth(source.CGImage), h = CGImageGetHeight(source.CGImage);
-        CGImageRef cropped = CGImageCreateWithImageInRect(source.CGImage,
-            CGRectMake(floor(w * .18), floor(h * .135), floor(w * .82), floor(h * .72)));
-        if (cropped) {
-            source = [UIImage imageWithCGImage:cropped];
-            CGImageRelease(cropped);
-        }
-    }
-    UIImageView *art = [[UIImageView alloc] initWithImage:source];
+    UIImageView *art = [[UIImageView alloc] initWithImage:LibertyCityArtwork()];
     art.contentMode = UIViewContentModeScaleAspectFill;
     art.translatesAutoresizingMaskIntoConstraints = NO;
     [hero insertSubview:art atIndex:0];
@@ -716,10 +718,7 @@ static Theft4ListSection *Group(NSString *header, NSArray<UITableViewCell *> *ce
     _godMode = Toggle(@"mods.godMode");
     _unlimitedAmmo = Toggle(@"mods.unlimitedAmmo");
 
-    NSString *previewPath = [NSBundle.mainBundle pathForResource:@"preview" ofType:@"jpg"
-                                                     inDirectory:@"Mods/CustomTimeCycle"];
-    UIImageView *preview = [[UIImageView alloc] initWithImage:
-        previewPath ? [UIImage imageWithContentsOfFile:previewPath] : nil];
+    UIImageView *preview = [[UIImageView alloc] initWithImage:LibertyCityArtwork()];
     preview.contentMode = UIViewContentModeScaleAspectFill;
     preview.backgroundColor = UIColor.tertiarySystemFillColor;
     preview.layer.cornerRadius = 10;
