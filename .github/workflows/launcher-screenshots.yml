@@ -1,0 +1,44 @@
+name: Launcher Screenshots
+
+# Builds the isolated launcher preview (no game code or data) for the iOS
+# Simulator and uploads screenshots of every launcher page.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'ios/Theft4/Theft4LauncherView.*'
+      - 'ios/Theft4/Theft4CityView.*'
+      - 'ios/launcher-preview/**'
+      - 'tools/ci_launcher_screenshots.sh'
+      - '.github/workflows/launcher-screenshots.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: launcher-shots-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shots:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+          xcrun simctl list devices available | head -n 40
+      - name: Build preview and capture screenshots
+        run: zsh tools/ci_launcher_screenshots.sh "$GITHUB_WORKSPACE/out/launcher-shots"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: launcher-screenshots
+          path: out/launcher-shots/*.png
+          if-no-files-found: error
+          retention-days: 14

@@ -6,7 +6,7 @@ name: iOS IPA Build
 on:
   workflow_dispatch:
   push:
-    branches: [diag/invalid-function-trap]
+    branches: [main, diag/invalid-function-trap, redesign/launcher-and-fixes]
     paths-ignore: ['docs/**', '**/*.md']
 
 permissions:
