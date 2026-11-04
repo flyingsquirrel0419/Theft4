@@ -790,8 +790,8 @@ static Theft4ListSection *Group(NSString *header, NSArray<UITableViewCell *> *ce
     const CGSize text = [_noticeLabel sizeThatFits:CGSizeMake(maxWidth - 36, CGFLOAT_MAX)];
     const CGFloat width = MIN(maxWidth, ceil(text.width) + 36);
     const CGFloat height = ceil(text.height) + 24;
-    _notice.frame = CGRectMake((bounds.size.width - width) / 2, CGRectGetMinY(_tabBar.frame) - height - 12,
-                               width, height);
+    // Like a system banner: just below the status bar, clear of the floating tab bar.
+    _notice.frame = CGRectMake((bounds.size.width - width) / 2, self.safeAreaInsets.top + 8, width, height);
     _notice.layer.cornerRadius = MIN(22, height / 2);
 
     [self refreshConfigurationSummary];
