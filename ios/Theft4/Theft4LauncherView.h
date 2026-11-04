@@ -50,4 +50,8 @@
 - (void)showNotice:(NSString *)message;
 // Locks the controls that only apply to a fresh game launch, and says why.
 - (void)setSessionLocked:(BOOL)locked;
+// 0 Play, 1 Graphics, 2 Interface, 3 System, 4 Mods.
+- (void)selectPage:(NSInteger)index;
+// Scrolls the current page so the row holding control is visible.
+- (void)revealControl:(UIView *)control;
 @end

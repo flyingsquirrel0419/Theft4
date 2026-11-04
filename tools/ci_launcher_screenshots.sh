@@ -29,6 +29,7 @@ for rt,devs in json.load(sys.stdin)["devices"].items():
   [[ -n "$udid" ]] || { echo "no simulator named $device"; return 0; }
   xcrun simctl boot "$udid" 2>/dev/null || true
   xcrun simctl bootstatus "$udid" -b >/dev/null
+  xcrun simctl ui "$udid" appearance "${THEFT4_SHOT_APPEARANCE:-light}" || true
   xcrun simctl install "$udid" "$app"
   xcrun simctl terminate "$udid" "$bundle" 2>/dev/null || true
   xcrun simctl launch "$udid" "$bundle" "$@" >/dev/null
@@ -51,6 +52,8 @@ for orient in portrait landscape; do
   done
 done
 shoot "$phone" "phone-portrait-locked" --portrait --display --locked
+THEFT4_SHOT_APPEARANCE=dark shoot "$phone" "phone-portrait-play-dark" --portrait
+THEFT4_SHOT_APPEARANCE=dark shoot "$phone" "phone-portrait-display-dark" --portrait --display
 if [[ -n "$pad" ]]; then
   shoot "$pad" "pad-landscape-play" --landscape
   shoot "$pad" "pad-landscape-display" --landscape --display

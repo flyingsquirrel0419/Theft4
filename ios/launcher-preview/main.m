@@ -67,27 +67,14 @@
     }
     if ([args containsObject:@"--display"] || [args containsObject:@"--interface"] ||
         [args containsObject:@"--system"] || [args containsObject:@"--mods"]) {
-        NSString *identifier = [args containsObject:@"--display"] ? @"launcher.tab.1" :
-            [args containsObject:@"--interface"] ? @"launcher.tab.2" :
-            [args containsObject:@"--mods"] ? @"launcher.tab.4" : @"launcher.tab.3";
-        [self selectInView:self.launcher identifier:identifier];
+        [self.launcher selectPage:[args containsObject:@"--display"] ? 1 :
+            [args containsObject:@"--interface"] ? 2 : [args containsObject:@"--mods"] ? 4 : 3];
     }
     if ([args containsObject:@"--aspect-mod"] || [args containsObject:@"--gameplay-mods"]) {
-        [self selectInView:self.launcher identifier:@"launcher.tab.4"];
+        [self.launcher selectPage:4];
         [self.launcher layoutIfNeeded];
-        UIView *ancestor = self.launcher.nativeAspect.superview;
-        while (ancestor && ![ancestor isKindOfClass:UIScrollView.class]) ancestor = ancestor.superview;
-        if (ancestor) {
-            UIScrollView *scroll = (UIScrollView *)ancestor;
-            UIView *control = [args containsObject:@"--gameplay-mods"]
-                ? self.launcher.godMode : self.launcher.nativeAspect;
-            CGRect region = [control convertRect:control.bounds toView:scroll];
-            region.origin.y = MAX(0, region.origin.y - 24);
-            if ([args containsObject:@"--gameplay-mods"])
-                region.size.height = MIN(260, scroll.bounds.size.height - 16);
-            else region.size.height += 300;
-            [scroll scrollRectToVisible:region animated:NO];
-        }
+        [self.launcher revealControl:[args containsObject:@"--gameplay-mods"]
+            ? self.launcher.godMode : self.launcher.nativeAspect];
     }
     if ([args containsObject:@"--retire"]) [self retire];
     if ([args containsObject:@"--locked"]) {
@@ -127,11 +114,6 @@
             [graph.heightAnchor constraintEqualToConstant:92]]];
         self.launcher.statusLabel.text = @"GRAPH PREVIEW  /  SYNTHETIC TIMING DATA";
     }
-}
-- (void)selectInView:(UIView *)view identifier:(NSString *)identifier {
-    if ([view.accessibilityIdentifier isEqualToString:identifier] && [view isKindOfClass:UIButton.class])
-        [(UIButton *)view sendActionsForControlEvents:UIControlEventTouchUpInside];
-    for (UIView *child in view.subviews) [self selectInView:child identifier:identifier];
 }
 @end
 @interface PreviewScene : UIResponder <UIWindowSceneDelegate>
