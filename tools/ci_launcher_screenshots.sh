@@ -12,7 +12,7 @@ cmake -S "$root/ios/launcher-preview" -B "$build" -G Xcode \
 xcodebuild -project "$build/Theft4LauncherPreview.xcodeproj" \
   -scheme Theft4LauncherPreview -configuration Debug -sdk iphonesimulator \
   -derivedDataPath "$build/dd" CODE_SIGNING_ALLOWED=NO build | tail -n 30
-app=$(find "$build/dd" -name 'Theft4LauncherPreview.app' -type d | head -n 1)
+app=$(find "$build" -name 'Theft4LauncherPreview.app' -type d -path '*iphonesimulator*' | head -n 1)
 [[ -n "$app" ]] || { echo "preview app not built"; exit 1; }
 bundle=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist")
 
