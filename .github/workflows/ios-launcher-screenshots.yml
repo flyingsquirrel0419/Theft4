@@ -6,6 +6,7 @@ name: iOS · Launcher screenshots
 on:
   workflow_dispatch:
   push:
+    branches: ['**']   # branches only; tags are handled by iOS · Release
     paths:
       - 'ios/Theft4/Theft4LauncherView.*'
       - 'ios/Theft4/Theft4CityView.*'
