@@ -237,6 +237,7 @@ static UIStackView *Section(NSString *heading, NSArray<UIView *> *rows, NSString
     NSArray<UIView *> *_pages;
     NSArray<UIView *> *_lockBanners;
     UIView *_tabBar;
+    UIVisualEffectView *_tabBarMaterial;
     UIStackView *_tabStack;
     NSArray<UIButton *> *_tabs;
     UILabel *_notice;
@@ -633,7 +634,7 @@ static UIStackView *Section(NSString *heading, NSArray<UIView *> *rows, NSString
     // Restart is hidden in retail builds; keep it in the same row as Verify so
     // hiding it does not leave an empty, divider-framed slot.
     [system addObject:Section(@"Game files", @[Column(@[_prepareButton, _restartButton], 10), _detailLabel],
-        [NSString stringWithFormat:@"%@ creates Files → On My iPhone/iPad → %@ → game on first launch. Copy the prepared game folder's contents (including update/) into game, then verify.",
+        [NSString stringWithFormat:@"%@ creates a game folder in its Files folder (On My iPhone/iPad → %@; under LiveContainer, inside LiveContainer's app data). Copy the prepared game folder's contents, including update/, into game, then verify.",
             displayName, displayName])];
 #ifdef THEFT4_BC_TEXTURE_COMPATIBILITY
     _astcConversion = Toggle(@"settings.astcConversion", Cyan());
@@ -753,7 +754,16 @@ static UIStackView *Section(NSString *heading, NSArray<UIView *> *rows, NSString
 
 - (void)buildTabs {
     _tabBar = [UIView new];
-    _tabBar.backgroundColor = [Ink(0x12141B) colorWithAlphaComponent:.94];
+    _tabBar.backgroundColor = [Ink(0x12141B) colorWithAlphaComponent:.55];
+    // Blur the content scrolling underneath so labels never show through.
+    UIVisualEffectView *material = [[UIVisualEffectView alloc] initWithEffect:
+        [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemChromeMaterialDark]];
+    material.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    material.layer.cornerRadius = 26;
+    material.layer.cornerCurve = kCACornerCurveContinuous;
+    material.clipsToBounds = YES;
+    material.userInteractionEnabled = NO;
+    _tabBarMaterial = material;
     _tabBar.layer.cornerRadius = 26;
     _tabBar.layer.cornerCurve = kCACornerCurveContinuous;
     _tabBar.layer.borderWidth = 1;
@@ -763,6 +773,8 @@ static UIStackView *Section(NSString *heading, NSArray<UIView *> *rows, NSString
     _tabBar.layer.shadowRadius = 20;
     _tabBar.layer.shadowOffset = CGSizeMake(0, 8);
     [self addSubview:_tabBar];
+    _tabBarMaterial.frame = _tabBar.bounds;
+    [_tabBar addSubview:_tabBarMaterial];
 
     NSArray<NSString *> *names = @[@"Play", @"Graphics", @"Interface", @"System", @"Mods"];
     NSArray<NSString *> *symbols = @[@"play.fill", @"slider.horizontal.3", @"speaker.wave.2",
@@ -946,6 +958,8 @@ static UIStackView *Section(NSString *heading, NSArray<UIView *> *rows, NSString
         contentBottom = h;
     }
     _tabBar.layer.cornerRadius = railMode ? 24 : 26;
+    _tabBarMaterial.frame = _tabBar.bounds;
+    _tabBarMaterial.layer.cornerRadius = _tabBar.layer.cornerRadius;
 
     // Header: wordmark, version and the runtime status pill.
     const CGFloat right = MAX(16, safe.right + 4);

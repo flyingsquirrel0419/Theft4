@@ -41,8 +41,8 @@ phone=${THEFT4_SHOT_PHONE:-}
 if [[ -z "$phone" ]]; then
   phone=$(xcrun simctl list devices available | grep -oE 'iPhone 1[5-9] Pro( Max)?|iPhone 1[5-9]' | head -n 1)
 fi
-pad=$(xcrun simctl list devices available | grep -oE 'iPad Pro [^(]*\)' | head -n 1 | sed 's/ *$//' || true)
-[[ -z "$pad" ]] && pad=$(xcrun simctl list devices available | grep -oE 'iPad Air [^(]*' | head -n 1 | sed 's/ *$//' || true)
+pad=$(xcrun simctl list devices available | sed -nE 's/^ *(iPad Pro 11-inch[^()]*\([^)]*\)).*/\1/p' | head -n 1)
+[[ -z "$pad" ]] && pad=$(xcrun simctl list devices available | sed -nE 's/^ *(iPad[^(]*[^ (]).*/\1/p' | head -n 1)
 echo "phone=$phone pad=$pad"
 for orient in portrait landscape; do
   shoot "$phone" "phone-$orient-play" --$orient
