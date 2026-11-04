@@ -1,19 +1,24 @@
-name: iOS IPA Build
+name: iOS · Build IPA
 
 # Unsigned sideload IPA (direct Metal renderer), same configuration as
 # tools/build_ios_release.sh. See tools/ci_build_ios_ipa.sh for CI differences.
+# Also called by ios-release.yml to build the release asset.
 
 on:
   workflow_dispatch:
+  workflow_call:
   push:
-    branches: [main, diag/invalid-function-trap, redesign/launcher-and-fixes]
-    paths-ignore: ['docs/**', '**/*.md']
+    branches: [main, 'redesign/**', 'fix/**', 'diag/**']
+    paths-ignore: ['docs/**', '**/*.md', 'ios/launcher-preview/**',
+                   '.github/workflows/ios-launcher-screenshots.yml',
+                   '.github/workflows/ios-release.yml',
+                   '.github/workflows/repo-checks.yml']
 
 permissions:
   contents: read
 
 concurrency:
-  group: build-ios-${{ github.ref }}
+  group: ios-build-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:

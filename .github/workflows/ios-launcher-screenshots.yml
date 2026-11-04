@@ -1,4 +1,4 @@
-name: Launcher Screenshots
+name: iOS · Launcher screenshots
 
 # Builds the isolated launcher preview (no game code or data) for the iOS
 # Simulator and uploads screenshots of every launcher page.
@@ -11,7 +11,7 @@ on:
       - 'ios/Theft4/Theft4CityView.*'
       - 'ios/launcher-preview/**'
       - 'tools/ci_launcher_screenshots.sh'
-      - '.github/workflows/launcher-screenshots.yml'
+      - '.github/workflows/ios-launcher-screenshots.yml'
 
 permissions:
   contents: read
