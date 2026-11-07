@@ -29,6 +29,7 @@ for rt,devs in json.load(sys.stdin)["devices"].items():
   [[ -n "$udid" ]] || { echo "no simulator named $device"; return 0; }
   xcrun simctl boot "$udid" 2>/dev/null || true
   xcrun simctl bootstatus "$udid" -b >/dev/null
+  xcrun simctl ui "$udid" appearance "${THEFT4_SHOT_APPEARANCE:-light}" || true
   xcrun simctl install "$udid" "$app"
   xcrun simctl terminate "$udid" "$bundle" 2>/dev/null || true
   xcrun simctl launch "$udid" "$bundle" "$@" >/dev/null
@@ -41,8 +42,8 @@ phone=${THEFT4_SHOT_PHONE:-}
 if [[ -z "$phone" ]]; then
   phone=$(xcrun simctl list devices available | grep -oE 'iPhone 1[5-9] Pro( Max)?|iPhone 1[5-9]' | head -n 1)
 fi
-pad=$(xcrun simctl list devices available | grep -oE 'iPad Pro [^(]*\)' | head -n 1 | sed 's/ *$//' || true)
-[[ -z "$pad" ]] && pad=$(xcrun simctl list devices available | grep -oE 'iPad Air [^(]*' | head -n 1 | sed 's/ *$//' || true)
+pad=$(xcrun simctl list devices available | sed -nE 's/^ *(iPad Pro 11-inch[^()]*\([^)]*\)).*/\1/p' | head -n 1)
+[[ -z "$pad" ]] && pad=$(xcrun simctl list devices available | sed -nE 's/^ *(iPad[^(]*[^ (]).*/\1/p' | head -n 1)
 echo "phone=$phone pad=$pad"
 for orient in portrait landscape; do
   shoot "$phone" "phone-$orient-play" --$orient
@@ -51,6 +52,8 @@ for orient in portrait landscape; do
   done
 done
 shoot "$phone" "phone-portrait-locked" --portrait --display --locked
+THEFT4_SHOT_APPEARANCE=dark shoot "$phone" "phone-portrait-play-dark" --portrait
+THEFT4_SHOT_APPEARANCE=dark shoot "$phone" "phone-portrait-display-dark" --portrait --display
 if [[ -n "$pad" ]]; then
   shoot "$pad" "pad-landscape-play" --landscape
   shoot "$pad" "pad-landscape-display" --landscape --display
