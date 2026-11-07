@@ -1,5 +1,15 @@
 # Theft4 engineering changelog
 
+## 0.3.3 — launcher redesign, audio and first-mission fixes — 2026-11-07
+
+**Version 0.3.3 · build 145 · iPhone and iPad**
+
+- Fix the first-mission crash ("THE COUSINS BELLIC") caused by a missing `game/update/` TU8 payload; Check Game Files now verifies all 15 TU8 files and fatal traps write `startup/fatal-report.log`.
+- Rebuild the launcher natively following the Apple HIG: system tab bar (Liquid Glass on iOS 26), inset-grouped lists, Dynamic Type, light and dark appearance, amber key color, Liberty City hero card and Settings-style icons.
+- Fix launcher buttons that did nothing; move the notice below the status bar.
+- Pause game audio in the background; fix low headphone volume and handle audio route changes.
+- Known limitation: switching launcher tabs with a game controller is not supported.
+
 ## 0.3.2 — potential BC texture preparation fix — 2026-10-14
 
 **Version 0.3.2 · build 144 · iPhone and iPad**
